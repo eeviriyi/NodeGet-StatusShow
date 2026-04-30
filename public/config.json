@@ -8,9 +8,9 @@
   },
   "site_tokens": [
     {
-      "name": "master server node 1",
+      "name": "root",
       "backend_url": "wss://control.aqa.cc",
-      "token": "rFiR6dFP9PMw66XE:hhcZbno397wqoqCSEum1uAGbTHaCBO05"
+      "token": "yR9j1YJJeiKWuslG:JufXdNgd8ZxBSI7U70KsQoYrC2RPlrn0"
     }
   ]
 }
