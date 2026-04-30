@@ -9,8 +9,8 @@
   "site_tokens": [
     {
       "name": "master server node 1",
-      "backend_url": "wss://your-backend.example.com",
-      "token": "YOUR_TOKEN_HERE"
+      "backend_url": "wss://control.aqa.cc",
+      "token": "rFiR6dFP9PMw66XE:hhcZbno397wqoqCSEum1uAGbTHaCBO05"
     }
   ]
 }
