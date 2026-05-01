@@ -25,3 +25,9 @@ export function relativeAge(ts?: number | null, now = Date.now()) {
   if (s < 3600) return `${Math.round(s / 60)} 分钟前`
   return `${Math.round(s / 3600)} 小时前`
 }
+
+export function ms(v?: number | null) {
+  if (v == null || !Number.isFinite(v)) return '—'
+  if (v < 100) return `${v.toFixed(1)} ms`
+  return `${Math.round(v)} ms`
+}

@@ -1,8 +1,15 @@
 import { useEffect, useMemo, useState } from 'react'
 import { BackendPool } from '../api/pool'
-import { dynamicSummaryMulti, kvGetMulti, listAgentUuids, staticDataMulti } from '../api/methods'
+import {
+  dynamicSummaryMulti,
+  kvGetMulti,
+  listAgentUuids,
+  staticDataMulti,
+  taskQuery,
+  type TaskQueryResult,
+} from '../api/methods'
 import { isOnline } from '../utils/status'
-import type { DynamicSummary, HistorySample, Node, NodeMeta, SiteConfig } from '../types'
+import type { DynamicSummary, HistorySample, LatencyStats, Node, NodeMeta, SiteConfig } from '../types'
 
 type Agent = Pick<Node, 'uuid' | 'source' | 'meta' | 'static'>
 
@@ -47,6 +54,9 @@ const META_KEYS = [
 ]
 const DYN_INTERVAL_MS = 2000
 const HISTORY_LIMIT = 60
+const DEFAULT_LATENCY_WINDOW_MINUTES = 24 * 60
+const DEFAULT_LATENCY_REFRESH_MS = 30_000
+const LATENCY_LIMIT = 2_000
 
 function emptyMeta(): NodeMeta {
   return { name: '', region: '', tags: [], hidden: false, virtualization: '', lat: null, lng: null }
@@ -86,10 +96,95 @@ function sampleFrom(row: DynamicSummary): HistorySample {
   }
 }
 
+function latencyType(config: SiteConfig): 'ping' | 'tcp_ping' {
+  return config.latency?.type === 'ping' ? 'ping' : 'tcp_ping'
+}
+
+function latencyTypes(config: SiteConfig): Array<'ping' | 'tcp_ping'> {
+  if (config.latency?.type === 'ping') return ['ping']
+  if (config.latency?.type === 'tcp_ping') return ['tcp_ping']
+  return ['tcp_ping', 'ping']
+}
+
+function latencyWindowMs(config: SiteConfig): number {
+  const minutes = config.latency?.window_minutes
+  return (Number.isFinite(minutes) && minutes && minutes > 0
+    ? minutes
+    : DEFAULT_LATENCY_WINDOW_MINUTES) * 60 * 1000
+}
+
+function latencyRefreshMs(config: SiteConfig): number {
+  const interval = config.latency?.refresh_interval_ms
+  return Number.isFinite(interval) && interval && interval >= 10_000
+    ? interval
+    : DEFAULT_LATENCY_REFRESH_MS
+}
+
+function computeLatency(rows: TaskQueryResult[], type: 'ping' | 'tcp_ping'): LatencyStats {
+  const sorted = rows.slice().sort((a, b) => a.timestamp - b.timestamp)
+  const samples = sorted
+    .filter(row => row.success && typeof row.task_event_result?.[type] === 'number')
+    .map(row => ({
+      t: row.timestamp,
+      latency: row.task_event_result?.[type] as number,
+    }))
+  const values = samples.map(row => row.latency)
+  const latest = values.length ? values[values.length - 1] : null
+  const avg = values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : null
+  const jitter =
+    values.length >= 2
+      ? values
+          .slice(1)
+          .reduce((sum, value, index) => sum + Math.abs(value - values[index]!), 0) /
+        (values.length - 1)
+      : null
+
+  return {
+    type,
+    latest,
+    avg,
+    jitter,
+    lossRate: sorted.length ? ((sorted.length - values.length) / sorted.length) * 100 : 0,
+    samples: values.length,
+    total: sorted.length,
+    updatedAt: sorted.length ? sorted[sorted.length - 1]!.timestamp : null,
+    history: samples.slice(-LATENCY_LIMIT),
+  }
+}
+
+function chooseLatencyStats(
+  stats: LatencyStats[],
+  fallbackType: 'ping' | 'tcp_ping',
+): LatencyStats {
+  const withSamples = stats.filter(stat => stat.total > 0)
+  const withValues = withSamples.find(stat => stat.latest != null)
+  return withValues ?? withSamples[0] ?? computeLatency([], fallbackType)
+}
+
+async function queryLatencyStats(
+  client: Parameters<typeof taskQuery>[0],
+  uuid: string,
+  type: 'ping' | 'tcp_ping',
+  from: number,
+  now: number,
+) {
+  const rows = await taskQuery(client, [
+    { uuid },
+    { timestamp_from_to: [from, now] },
+    { type },
+    { limit: LATENCY_LIMIT },
+  ])
+  if (rows?.length) return computeLatency(rows, type)
+
+  const latestRows = await taskQuery(client, [{ uuid }, { type }, { limit: LATENCY_LIMIT }])
+  return computeLatency(latestRows || [], type)
+}
+
 export function useNodes(config: SiteConfig | null) {
   const [agents, setAgents] = useState<Map<string, Agent>>(new Map())
   const [live, setLive] = useState<Map<string, DynamicSummary>>(new Map())
   const [history, setHistory] = useState<Map<string, HistorySample[]>>(new Map())
+  const [latency, setLatency] = useState<Map<string, LatencyStats>>(new Map())
   const [errors, setErrors] = useState<BackendError[]>([])
   const [loading, setLoading] = useState(true)
   const [tick, setTick] = useState(0)
@@ -155,6 +250,7 @@ export function useNodes(config: SiteConfig | null) {
       )
 
       await tickDynamic()
+      await tickLatency()
       setLoading(false)
     }
 
@@ -189,21 +285,63 @@ export function useNodes(config: SiteConfig | null) {
       })
     }
 
+    const tickLatency = async () => {
+      if (config.latency?.enabled === false) {
+        setLatency(new Map())
+        return
+      }
+
+      const types = latencyTypes(config)
+      const now = Date.now()
+      const from = now - latencyWindowMs(config)
+      const updates = new Map<string, LatencyStats>()
+
+      await Promise.allSettled(
+        pool.entries.map(async entry => {
+          const uuids = sourceUuids.get(entry.name) || []
+          if (!uuids.length) return
+
+          await Promise.allSettled(
+            uuids.map(async uuid => {
+              const settled = await Promise.allSettled(
+                types.map(type => queryLatencyStats(entry.client, uuid, type, from, now)),
+              )
+              const stats = settled
+                .filter((item): item is PromiseFulfilledResult<LatencyStats> => item.status === 'fulfilled')
+                .map(item => item.value)
+              if (stats.length) updates.set(uuid, chooseLatencyStats(stats, latencyType(config)))
+            }),
+          )
+        }),
+      )
+
+      setLatency(prev => {
+        const next = new Map(prev)
+        for (const [uuid, stat] of updates) next.set(uuid, stat)
+        return next
+      })
+    }
+
     bootstrap().catch((e: unknown) => {
       setErrors(prev => [...prev, { source: '*', error: e }])
       setLoading(false)
     })
 
     const onVisible = () => {
-      if (document.visibilityState === 'visible') tickDynamic()
+      if (document.visibilityState === 'visible') {
+        tickDynamic()
+        tickLatency()
+      }
     }
     document.addEventListener('visibilitychange', onVisible)
 
     const dynTimer = setInterval(tickDynamic, DYN_INTERVAL_MS)
+    const latencyTimer = setInterval(tickLatency, latencyRefreshMs(config))
     const clockTimer = setInterval(() => setTick(t => t + 1), 5000)
 
     return () => {
       clearInterval(dynTimer)
+      clearInterval(latencyTimer)
       clearInterval(clockTimer)
       document.removeEventListener('visibilitychange', onVisible)
       pool.close()
@@ -219,11 +357,12 @@ export function useNodes(config: SiteConfig | null) {
         ...a,
         dynamic: dyn,
         history: history.get(uuid) || [],
+        latency: latency.get(uuid) || null,
         online: isOnline(dyn?.timestamp, now),
       })
     }
     return out
-  }, [agents, live, history, tick])
+  }, [agents, live, history, latency, tick])
 
   return { nodes, errors, loading }
 }

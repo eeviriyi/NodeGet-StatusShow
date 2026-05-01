@@ -1,4 +1,4 @@
-const REPO = 'https://github.com/NodeSeekDev/NodeGet-StatusShow'
+const REPO = 'https://github.com/eeviriyi/NodeGet-StatusShow'
 
 export function Footer({ text }: { text?: string }) {
   return (

@@ -1,10 +1,10 @@
-import { ArrowDown, ArrowUp, Clock, type LucideIcon } from 'lucide-react'
+import { Activity, ArrowDown, ArrowUp, Clock, type LucideIcon } from 'lucide-react'
 import { Badge } from './ui/badge'
 import { Card } from './ui/card'
 import { Progress } from './ui/progress'
 import { Flag } from './Flag'
 import { StatusDot } from './StatusDot'
-import { bytes, pct, relativeAge, uptime } from '../utils/format'
+import { bytes, ms, pct, relativeAge, uptime } from '../utils/format'
 import { cpuLabel, deriveUsage, displayName, distroLogo, osLabel, virtLabel } from '../utils/derive'
 import { cn, loadColor } from '../utils/cn'
 import type { Node } from '../types'
@@ -64,6 +64,7 @@ export function NodeCard({ node }: { node: Node }) {
           </div>
           <div className="flex items-center gap-3">
             <Stat icon={Clock}>{uptime(u.uptime)}</Stat>
+            <Stat icon={Activity}>延迟 {ms(node.latency?.latest)}</Stat>
             <span className="ml-auto">{relativeAge(u.ts)}</span>
           </div>
         </div>

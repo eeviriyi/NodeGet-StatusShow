@@ -4,7 +4,7 @@ import { Progress } from './ui/progress'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from './ui/table'
 import { Flag } from './Flag'
 import { StatusDot } from './StatusDot'
-import { bytes, pct, relativeAge } from '../utils/format'
+import { bytes, ms, pct, relativeAge } from '../utils/format'
 import { deriveUsage, displayName, distroLogo, virtLabel } from '../utils/derive'
 import { cn, loadColor } from '../utils/cn'
 import type { Node } from '../types'
@@ -27,6 +27,7 @@ export function NodeTable({ nodes, onOpen }: Props) {
             <TableHead>CPU</TableHead>
             <TableHead>内存</TableHead>
             <TableHead>磁盘</TableHead>
+            <TableHead>延迟</TableHead>
             <TableHead>下行</TableHead>
             <TableHead>上行</TableHead>
             <TableHead>更新</TableHead>
@@ -90,6 +91,7 @@ export function NodeTable({ nodes, onOpen }: Props) {
                     hint={u.diskTotal ? `${bytes(u.diskUsed)} / ${bytes(u.diskTotal)}` : null}
                   />
                 </TableCell>
+                <TableCell className="font-mono">{ms(n.latency?.latest)}</TableCell>
                 <TableCell className="font-mono">{bytes(u.netIn || 0)}/s</TableCell>
                 <TableCell className="font-mono">{bytes(u.netOut || 0)}/s</TableCell>
                 <TableCell className="font-mono text-xs text-muted-foreground">

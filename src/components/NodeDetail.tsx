@@ -1,12 +1,12 @@
-import { type ReactNode, useEffect } from 'react'
-import { ArrowLeft } from 'lucide-react'
+import { type ReactNode, useEffect, useState } from 'react'
+import { Activity, ArrowLeft } from 'lucide-react'
 import { Area, AreaChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { Badge } from './ui/badge'
 import { Button } from './ui/button'
 import { Card } from './ui/card'
 import { Flag } from './Flag'
 import { StatusDot } from './StatusDot'
-import { bytes, pct, relativeAge, uptime } from '../utils/format'
+import { bytes, ms, pct, relativeAge, uptime } from '../utils/format'
 import { deriveUsage, displayName, distroLogo, osLabel, virtLabel } from '../utils/derive'
 import { strokeColor } from '../utils/cn'
 import type { HistorySample, Node } from '../types'
@@ -25,6 +25,8 @@ interface Props {
 }
 
 export function NodeDetail({ node, onClose, showSource }: Props) {
+  const [latencyRange, setLatencyRange] = useState<LatencyRange>('24h')
+
   useEffect(() => {
     if (!node) return
     const onKey = (e: KeyboardEvent) => {
@@ -55,6 +57,7 @@ export function NodeDetail({ node, onClose, showSource }: Props) {
       ? `${d.load_one.toFixed(2)} / ${d.load_five.toFixed(2)} / ${d.load_fifteen.toFixed(2)}`
       : null
   const history = node.history || []
+  const latencyHistory = filterLatencyHistory(node.latency?.history ?? [], latencyRange)
 
   return (
     <div className="fixed inset-0 z-50 bg-background overflow-y-auto animate-in fade-in duration-150">
@@ -150,6 +153,33 @@ export function NodeDetail({ node, onClose, showSource }: Props) {
           </Section>
         )}
 
+        {node.latency?.history.length ? (
+          <Section title="延迟趋势">
+            <div className="space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <RangeTabs value={latencyRange} onChange={setLatencyRange} />
+                <span className="text-xs text-muted-foreground">
+                  {latencyHistory.length} / {node.latency.history.length} 个样本
+                </span>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-[1fr_220px] gap-4">
+                <Spark
+                  data={latencyHistory}
+                  dataKey="latency"
+                  label="延迟"
+                  stroke="#06b6d4"
+                  format={ms}
+                />
+                <LatencyOverview node={node} compact />
+              </div>
+            </div>
+          </Section>
+        ) : (
+          <Section title="延迟趋势">
+            <div className="text-sm text-muted-foreground">暂无延迟数据</div>
+          </Section>
+        )}
+
         <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
           <Section title="系统">
             <KV k="主机名" v={s?.system_host_name} />
@@ -189,6 +219,100 @@ export function NodeDetail({ node, onClose, showSource }: Props) {
           </Section>
         </div>
       </div>
+    </div>
+  )
+}
+
+type LatencyRange = '1h' | '6h' | '24h' | 'all'
+
+const LATENCY_RANGES: { label: string; value: LatencyRange; ms?: number }[] = [
+  { label: '1h', value: '1h', ms: 60 * 60 * 1000 },
+  { label: '6h', value: '6h', ms: 6 * 60 * 60 * 1000 },
+  { label: '24h', value: '24h', ms: 24 * 60 * 60 * 1000 },
+  { label: '全部', value: 'all' },
+]
+
+function filterLatencyHistory(
+  history: { t: number; latency: number }[],
+  range: LatencyRange,
+) {
+  const item = LATENCY_RANGES.find(r => r.value === range)
+  if (!item?.ms) return history
+  const cutoff = Date.now() - item.ms
+  return history.filter(row => row.t >= cutoff)
+}
+
+function RangeTabs({
+  value,
+  onChange,
+}: {
+  value: LatencyRange
+  onChange: (value: LatencyRange) => void
+}) {
+  return (
+    <div className="inline-flex rounded-md border bg-muted/30 p-0.5">
+      {LATENCY_RANGES.map(item => (
+        <button
+          key={item.value}
+          type="button"
+          onClick={() => onChange(item.value)}
+          className={[
+            'h-7 px-2.5 rounded-[5px] text-xs font-mono transition-colors',
+            item.value === value
+              ? 'bg-background text-foreground shadow-sm'
+              : 'text-muted-foreground hover:text-foreground',
+          ].join(' ')}
+        >
+          {item.label}
+        </button>
+      ))}
+    </div>
+  )
+}
+
+function LatencyOverview({ node, compact }: { node: Node; compact?: boolean }) {
+  const latency = node.latency
+  return (
+    <div className="space-y-4">
+      <div className="flex items-end justify-between gap-4">
+        <div className="min-w-0">
+          <div className="text-xs text-muted-foreground mb-1">当前延迟</div>
+          <div className="flex items-center gap-2">
+            <Activity className="h-5 w-5 text-primary" />
+            <span className={compact ? 'font-mono text-2xl font-semibold' : 'font-mono text-3xl font-semibold'}>
+              {ms(latency?.latest)}
+            </span>
+          </div>
+        </div>
+        {latency?.type && (
+          <Badge variant="secondary" className="font-mono">
+            {latency.type}
+          </Badge>
+        )}
+      </div>
+
+      <div className="grid grid-cols-2 gap-3">
+        <LatencyMetric label="平均" value={ms(latency?.avg)} />
+        <LatencyMetric label="抖动" value={ms(latency?.jitter)} />
+        <LatencyMetric label="丢包" value={latency ? pct(latency.lossRate) : '—'} />
+        <LatencyMetric
+          label="样本"
+          value={latency ? `${latency.samples}/${latency.total}` : '—'}
+        />
+      </div>
+
+      <div className="text-xs text-muted-foreground">
+        更新：{relativeAge(latency?.updatedAt)}
+      </div>
+    </div>
+  )
+}
+
+function LatencyMetric({ label, value }: { label: string; value: ReactNode }) {
+  return (
+    <div className="rounded-md border bg-card/50 p-3">
+      <div className="text-[11px] text-muted-foreground mb-1">{label}</div>
+      <div className="font-mono text-sm">{value}</div>
     </div>
   )
 }
@@ -253,16 +377,23 @@ function Ring({ label, value, sub }: { label: string; value?: number; sub?: stri
   )
 }
 
-interface SparkProps {
-  data: HistorySample[]
-  dataKey: keyof HistorySample
+interface SparkProps<T extends object> {
+  data: T[]
+  dataKey: keyof T & string
   label: string
   stroke: string
   domain?: [number, number]
   format: (v: number) => string
 }
 
-function Spark({ data, dataKey, label, stroke, domain, format }: SparkProps) {
+function Spark<T extends object>({
+  data,
+  dataKey,
+  label,
+  stroke,
+  domain,
+  format,
+}: SparkProps<T>) {
   const last = Number(data.at(-1)?.[dataKey] ?? 0)
   const id = `g-${dataKey}`
   return (
