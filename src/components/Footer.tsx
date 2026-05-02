@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 
-const REPO = 'https://github.com/NodeSeekDev/NodeGet-StatusShow'
+const REPO = 'https://github.com/eeviriyi/NodeGet-StatusShow'
 const PKG_URL = 'https://raw.githubusercontent.com/NodeSeekDev/NodeGet-StatusShow/main/package.json'
 
 export function Footer({ text }: { text?: string }) {
