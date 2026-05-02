@@ -4,9 +4,9 @@
   "footer": "Powered by NodeGet",
   "site_tokens": [
     {
-      "name": "root",
-      "backend_url": "wss://control.aqa.cc",
-      "token": "yR9j1YJJeiKWuslG:JufXdNgd8ZxBSI7U70KsQoYrC2RPlrn0"
+      "name": "master server node 1",
+      "backend_url": "wss://your-backend.example.com",
+      "token": "YOUR_TOKEN_HERE"
     }
   ]
 }

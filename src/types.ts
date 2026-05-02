@@ -74,18 +74,6 @@ export interface HistorySample {
   netOut: number
 }
 
-export interface LatencyStats {
-  type: 'ping' | 'tcp_ping'
-  latest: number | null
-  avg: number | null
-  jitter: number | null
-  lossRate: number
-  samples: number
-  total: number
-  updatedAt: number | null
-  history: { t: number; latency: number }[]
-}
-
 export interface Node {
   uuid: string
   source: string
@@ -94,23 +82,12 @@ export interface Node {
   static: StaticData
   dynamic: DynamicSummary | null
   history: HistorySample[]
-  latency: LatencyStats | null
 }
 
 export interface SiteConfig {
   site_name?: string
   site_logo?: string
-  site_log?: string
   footer?: string
-  theme_name?: string
-  theme_repo?: string
-  theme_config?: { footer?: string }
-  latency?: {
-    enabled?: boolean
-    type?: 'auto' | 'ping' | 'tcp_ping'
-    window_minutes?: number
-    refresh_interval_ms?: number
-  }
   site_tokens: { name: string; backend_url: string; token: string }[]
 }
 
