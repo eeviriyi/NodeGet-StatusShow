@@ -10,32 +10,47 @@ import { NodeCard } from './components/NodeCard'
 import { NodeTable } from './components/NodeTable'
 import { NodeDetail } from './components/NodeDetail'
 import { TagFilter } from './components/TagFilter'
-import type { View } from './types'
+import { RegionFilter } from './components/RegionFilter'
+import { deriveUsage, displayName } from './utils/derive'
+import type { Sort, View } from './types'
 
 const DEFAULT_LOGO = `${import.meta.env.BASE_URL}logo.png`
 const VIEW_KEY = 'nodeget.view'
+const SORT_KEY = 'nodeget.sort'
 
 function initialView(): View {
   const v = localStorage.getItem(VIEW_KEY)
   return v === 'table' ? 'table' : 'cards'
 }
 
+function initialSort(): Sort {
+  return (localStorage.getItem(SORT_KEY) as Sort) || 'default'
+}
+
 function readHash() {
   return decodeURIComponent(window.location.hash.slice(1)) || null
 }
+
+const num = (v?: number) => (Number.isFinite(v) ? (v as number) : -Infinity)
 
 export function App() {
   const { config, error: configError } = useConfig()
   const { nodes, errors } = useNodes(config)
 
   const [view, setView] = useState<View>(initialView)
+  const [sort, setSort] = useState<Sort>(initialSort)
   const [query, setQuery] = useState('')
   const [activeTag, setActiveTag] = useState<string | null>(null)
+  const [activeRegion, setActiveRegion] = useState<string | null>(null)
   const [selected, setSelected] = useState<string | null>(readHash)
 
   useEffect(() => {
     localStorage.setItem(VIEW_KEY, view)
   }, [view])
+
+  useEffect(() => {
+    localStorage.setItem(SORT_KEY, sort)
+  }, [sort])
 
   useEffect(() => {
     const onHash = () => setSelected(readHash())
@@ -62,13 +77,36 @@ export function App() {
     return [...set].sort()
   }, [nodes])
 
+  const regions = useMemo(() => {
+    const map = new Map<string, number>()
+    let total = 0
+    for (const n of nodes.values()) {
+      if (n.meta?.hidden) continue
+      total++
+      const code = n.meta?.region?.trim().toUpperCase()
+      if (!code || !/^[A-Z]{2}$/.test(code)) continue
+      map.set(code, (map.get(code) ?? 0) + 1)
+    }
+    const list = [...map.entries()]
+      .map(([code, count]) => ({ code, count }))
+      .sort((a, b) => b.count - a.count || a.code.localeCompare(b.code))
+    return { list, total }
+  }, [nodes])
+
   useEffect(() => {
     if (activeTag && !allTags.includes(activeTag)) setActiveTag(null)
   }, [allTags, activeTag])
 
+  useEffect(() => {
+    if (activeRegion && !regions.list.some(r => r.code === activeRegion)) setActiveRegion(null)
+  }, [regions, activeRegion])
+
   const list = useMemo(() => {
     let arr = [...nodes.values()].filter(n => !n.meta?.hidden)
     if (activeTag) arr = arr.filter(n => n.meta?.tags?.includes(activeTag))
+    if (activeRegion) {
+      arr = arr.filter(n => n.meta?.region?.trim().toUpperCase() === activeRegion)
+    }
 
     const q = query.trim().toLowerCase()
     if (q) {
@@ -90,13 +128,29 @@ export function App() {
       })
     }
 
+    const rank = new Map(regions.list.map((r, i) => [r.code, i]))
+
     return arr.sort((a, b) => {
       if (a.online !== b.online) return a.online ? -1 : 1
-      const an = a.meta?.name || a.uuid
-      const bn = b.meta?.name || b.uuid
-      return an.localeCompare(bn)
+
+      const ua = deriveUsage(a)
+      const ub = deriveUsage(b)
+      let cmp = 0
+      if (sort === 'cpu') cmp = num(ub.cpu) - num(ua.cpu)
+      else if (sort === 'mem') cmp = num(ub.mem) - num(ua.mem)
+      else if (sort === 'disk') cmp = num(ub.disk) - num(ua.disk)
+      else if (sort === 'netIn') cmp = num(ub.netIn) - num(ua.netIn)
+      else if (sort === 'netOut') cmp = num(ub.netOut) - num(ua.netOut)
+      else if (sort === 'uptime') cmp = num(ub.uptime) - num(ua.uptime)
+      else if (sort === 'region') {
+        const ar = rank.get(a.meta?.region?.trim().toUpperCase() || '') ?? Infinity
+        const br = rank.get(b.meta?.region?.trim().toUpperCase() || '') ?? Infinity
+        cmp = ar - br
+      }
+
+      return cmp || displayName(a).localeCompare(displayName(b))
     })
-  }, [nodes, query, activeTag])
+  }, [nodes, query, activeTag, activeRegion, sort, regions])
 
   const selectedNode = selected ? nodes.get(selected) || null : null
 
@@ -120,7 +174,7 @@ export function App() {
     )
   }
 
-  const logo = config.site_logo || config.site_log || DEFAULT_LOGO
+  const logo = config.site_logo || DEFAULT_LOGO
   const empty = list.length === 0
   const hasErrors = errors.length > 0
 
@@ -134,9 +188,19 @@ export function App() {
         onQuery={setQuery}
         view={view}
         onView={setView}
+        sort={sort}
+        onSort={setSort}
       />
 
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 py-6 sm:py-8 space-y-6">
+        {!empty && (
+          <RegionFilter
+            regions={regions.list}
+            total={regions.total}
+            active={activeRegion}
+            onChange={setActiveRegion}
+          />
+        )}
         {!empty && <TagFilter tags={allTags} active={activeTag} onChange={setActiveTag} />}
 
         {empty && !hasErrors && (
@@ -177,7 +241,7 @@ export function App() {
         )}
       </main>
 
-      <Footer text={config.theme_config?.footer} />
+      <Footer text={config.footer} />
 
       <NodeDetail
         node={selectedNode}

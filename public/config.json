@@ -1,11 +1,7 @@
 {
   "site_name": "NodeGet Status",
   "site_logo": "",
-  "theme_name": "default",
-  "theme_repo": "",
-  "theme_config": {
-    "footer": "Powered by NodeGet"
-  },
+  "footer": "Powered by NodeGet",
   "site_tokens": [
     {
       "name": "root",

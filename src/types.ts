@@ -100,6 +100,7 @@ export interface SiteConfig {
   site_name?: string
   site_logo?: string
   site_log?: string
+  footer?: string
   theme_name?: string
   theme_repo?: string
   theme_config?: { footer?: string }
@@ -113,6 +114,17 @@ export interface SiteConfig {
 }
 
 export type View = 'cards' | 'table'
+
+export type Sort =
+  | 'default'
+  | 'name'
+  | 'region'
+  | 'cpu'
+  | 'mem'
+  | 'disk'
+  | 'netIn'
+  | 'netOut'
+  | 'uptime'
 
 export interface Usage {
   cpu?: number
