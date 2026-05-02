@@ -6,10 +6,17 @@ import {
   listAgentUuids,
   staticDataMulti,
   taskQuery,
-  type TaskQueryResult,
 } from '../api/methods'
 import { isOnline } from '../utils/status'
-import type { DynamicSummary, HistorySample, LatencyStats, Node, NodeMeta, SiteConfig } from '../types'
+import type {
+  DynamicSummary,
+  HistorySample,
+  LatencyStats,
+  Node,
+  NodeMeta,
+  SiteConfig,
+  TaskQueryResult,
+} from '../types'
 
 type Agent = Pick<Node, 'uuid' | 'source' | 'meta' | 'static'>
 
