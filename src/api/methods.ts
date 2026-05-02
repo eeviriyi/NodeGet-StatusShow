@@ -1,15 +1,5 @@
 import type { RpcClient } from './client'
-import type { DynamicSummary, StaticData } from '../types'
-
-export interface TaskQueryResult {
-  task_id: number
-  uuid: string
-  timestamp: number
-  success: boolean
-  error_message: string | null
-  task_event_result: Record<string, unknown> | null
-  cron_source?: string | null
-}
+import type { DynamicSummary, StaticData, TaskQueryCondition, TaskQueryResult } from '../types'
 
 export const listAgentUuids = (c: RpcClient) =>
   c.call<{ uuids?: string[] }>('nodeget-server_list_all_agent_uuid', {}).then(r => r?.uuids || [])
@@ -27,5 +17,6 @@ export const kvGetMulti = (
 
 export const taskQuery = (
   c: RpcClient,
-  condition: Array<Record<string, unknown>>,
-) => c.call<TaskQueryResult[]>('task_query', { task_data_query: { condition } })
+  conditions: TaskQueryCondition[],
+  timeoutMs?: number,
+) => c.call<TaskQueryResult[]>('task_query', { task_data_query: { condition: conditions } }, timeoutMs)

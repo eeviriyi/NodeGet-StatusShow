@@ -1,15 +1,31 @@
-import { type ReactNode, useEffect, useState } from 'react'
-import { Activity, ArrowLeft } from 'lucide-react'
-import { Area, AreaChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
+import { type ReactNode, useEffect, useMemo, useState } from 'react'
+import { ArrowLeft } from 'lucide-react'
+import {
+  Area,
+  AreaChart,
+  Line,
+  LineChart,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from 'recharts'
 import { Badge } from './ui/badge'
 import { Button } from './ui/button'
 import { Card } from './ui/card'
 import { Flag } from './Flag'
 import { StatusDot } from './StatusDot'
-import { bytes, ms, pct, relativeAge, uptime } from '../utils/format'
+import { bytes, pct, relativeAge, uptime } from '../utils/format'
 import { deriveUsage, displayName, distroLogo, osLabel, virtLabel } from '../utils/derive'
-import { strokeColor } from '../utils/cn'
-import type { HistorySample, Node } from '../types'
+import { cn, strokeColor } from '../utils/cn'
+import {
+  buildLatencyChart,
+  computeLatencyStats,
+  type LatencyStats,
+} from '../utils/latency'
+import { useNodeLatency } from '../hooks/useNodeLatency'
+import type { BackendPool } from '../api/pool'
+import type { HistorySample, LatencyType, Node, TaskQueryResult } from '../types'
 
 const TOOLTIP_STYLE = {
   background: 'hsl(var(--popover))',
@@ -22,11 +38,10 @@ interface Props {
   node: Node | null
   onClose: () => void
   showSource?: boolean
+  pool: BackendPool | null
 }
 
-export function NodeDetail({ node, onClose, showSource }: Props) {
-  const [latencyRange, setLatencyRange] = useState<LatencyRange>('24h')
-
+export function NodeDetail({ node, onClose, showSource, pool }: Props) {
   useEffect(() => {
     if (!node) return
     const onKey = (e: KeyboardEvent) => {
@@ -40,6 +55,12 @@ export function NodeDetail({ node, onClose, showSource }: Props) {
       document.body.style.overflow = prev
     }
   }, [node, onClose])
+
+  const { pingData, tcpData, loading: latencyLoading } = useNodeLatency(
+    pool,
+    node?.source ?? null,
+    node?.uuid ?? null,
+  )
 
   if (!node) return null
 
@@ -57,7 +78,6 @@ export function NodeDetail({ node, onClose, showSource }: Props) {
       ? `${d.load_one.toFixed(2)} / ${d.load_five.toFixed(2)} / ${d.load_fifteen.toFixed(2)}`
       : null
   const history = node.history || []
-  const latencyHistory = filterLatencyHistory(node.latency?.history ?? [], latencyRange)
 
   return (
     <div className="fixed inset-0 z-50 bg-background overflow-y-auto animate-in fade-in duration-150">
@@ -153,32 +173,13 @@ export function NodeDetail({ node, onClose, showSource }: Props) {
           </Section>
         )}
 
-        {node.latency?.history.length ? (
-          <Section title="延迟趋势">
-            <div className="space-y-3">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <RangeTabs value={latencyRange} onChange={setLatencyRange} />
-                <span className="text-xs text-muted-foreground">
-                  {latencyHistory.length} / {node.latency.history.length} 个样本
-                </span>
-              </div>
-              <div className="grid grid-cols-1 md:grid-cols-[1fr_220px] gap-4">
-                <Spark
-                  data={latencyHistory}
-                  dataKey="latency"
-                  label="延迟"
-                  stroke="#06b6d4"
-                  format={ms}
-                />
-                <LatencyOverview node={node} compact />
-              </div>
-            </div>
-          </Section>
-        ) : (
-          <Section title="延迟趋势">
-            <div className="text-sm text-muted-foreground">暂无延迟数据</div>
-          </Section>
-        )}
+        <LatencyBlock
+          title="TCP Ping"
+          rows={tcpData}
+          type="tcp_ping"
+          loading={latencyLoading}
+        />
+        <LatencyBlock title="Ping" rows={pingData} type="ping" loading={latencyLoading} />
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
           <Section title="系统">
@@ -219,100 +220,6 @@ export function NodeDetail({ node, onClose, showSource }: Props) {
           </Section>
         </div>
       </div>
-    </div>
-  )
-}
-
-type LatencyRange = '1h' | '6h' | '24h' | 'all'
-
-const LATENCY_RANGES: { label: string; value: LatencyRange; ms?: number }[] = [
-  { label: '1h', value: '1h', ms: 60 * 60 * 1000 },
-  { label: '6h', value: '6h', ms: 6 * 60 * 60 * 1000 },
-  { label: '24h', value: '24h', ms: 24 * 60 * 60 * 1000 },
-  { label: '全部', value: 'all' },
-]
-
-function filterLatencyHistory(
-  history: { t: number; latency: number }[],
-  range: LatencyRange,
-) {
-  const item = LATENCY_RANGES.find(r => r.value === range)
-  if (!item?.ms) return history
-  const cutoff = Date.now() - item.ms
-  return history.filter(row => row.t >= cutoff)
-}
-
-function RangeTabs({
-  value,
-  onChange,
-}: {
-  value: LatencyRange
-  onChange: (value: LatencyRange) => void
-}) {
-  return (
-    <div className="inline-flex rounded-md border bg-muted/30 p-0.5">
-      {LATENCY_RANGES.map(item => (
-        <button
-          key={item.value}
-          type="button"
-          onClick={() => onChange(item.value)}
-          className={[
-            'h-7 px-2.5 rounded-[5px] text-xs font-mono transition-colors',
-            item.value === value
-              ? 'bg-background text-foreground shadow-sm'
-              : 'text-muted-foreground hover:text-foreground',
-          ].join(' ')}
-        >
-          {item.label}
-        </button>
-      ))}
-    </div>
-  )
-}
-
-function LatencyOverview({ node, compact }: { node: Node; compact?: boolean }) {
-  const latency = node.latency
-  return (
-    <div className="space-y-4">
-      <div className="flex items-end justify-between gap-4">
-        <div className="min-w-0">
-          <div className="text-xs text-muted-foreground mb-1">当前延迟</div>
-          <div className="flex items-center gap-2">
-            <Activity className="h-5 w-5 text-primary" />
-            <span className={compact ? 'font-mono text-2xl font-semibold' : 'font-mono text-3xl font-semibold'}>
-              {ms(latency?.latest)}
-            </span>
-          </div>
-        </div>
-        {latency?.type && (
-          <Badge variant="secondary" className="font-mono">
-            {latency.type}
-          </Badge>
-        )}
-      </div>
-
-      <div className="grid grid-cols-2 gap-3">
-        <LatencyMetric label="平均" value={ms(latency?.avg)} />
-        <LatencyMetric label="抖动" value={ms(latency?.jitter)} />
-        <LatencyMetric label="丢包" value={latency ? pct(latency.lossRate) : '—'} />
-        <LatencyMetric
-          label="样本"
-          value={latency ? `${latency.samples}/${latency.total}` : '—'}
-        />
-      </div>
-
-      <div className="text-xs text-muted-foreground">
-        更新：{relativeAge(latency?.updatedAt)}
-      </div>
-    </div>
-  )
-}
-
-function LatencyMetric({ label, value }: { label: string; value: ReactNode }) {
-  return (
-    <div className="rounded-md border bg-card/50 p-3">
-      <div className="text-[11px] text-muted-foreground mb-1">{label}</div>
-      <div className="font-mono text-sm">{value}</div>
     </div>
   )
 }
@@ -377,23 +284,16 @@ function Ring({ label, value, sub }: { label: string; value?: number; sub?: stri
   )
 }
 
-interface SparkProps<T extends object> {
-  data: T[]
-  dataKey: keyof T & string
+interface SparkProps {
+  data: HistorySample[]
+  dataKey: keyof HistorySample
   label: string
   stroke: string
   domain?: [number, number]
   format: (v: number) => string
 }
 
-function Spark<T extends object>({
-  data,
-  dataKey,
-  label,
-  stroke,
-  domain,
-  format,
-}: SparkProps<T>) {
+function Spark({ data, dataKey, label, stroke, domain, format }: SparkProps) {
   const last = Number(data.at(-1)?.[dataKey] ?? 0)
   const id = `g-${dataKey}`
   return (
@@ -429,6 +329,150 @@ function Spark<T extends object>({
           </AreaChart>
         </ResponsiveContainer>
       </div>
+    </div>
+  )
+}
+
+interface LatencyBlockProps {
+  title: string
+  rows: TaskQueryResult[]
+  type: LatencyType
+  loading: boolean
+}
+
+const ms = (v: number) => `${v.toFixed(1)} ms`
+
+function LatencyBlock({ title, rows, type, loading }: LatencyBlockProps) {
+  const { data, series } = useMemo(() => buildLatencyChart(rows, type), [rows, type])
+  const stats = useMemo(() => computeLatencyStats(rows, type), [rows, type])
+  const [hidden, setHidden] = useState<Set<string>>(() => new Set())
+  const empty = data.length === 0
+
+  const visibleSeries = series.filter(s => !hidden.has(s.name))
+
+  const toggle = (name: string) =>
+    setHidden(prev => {
+      const next = new Set(prev)
+      if (next.has(name)) next.delete(name)
+      else next.add(name)
+      return next
+    })
+
+  return (
+    <Section title={`${title} · 近 1 小时`}>
+      <div className="relative h-60">
+        {empty && (
+          <div className="absolute inset-0 flex items-center justify-center text-xs text-muted-foreground">
+            {loading ? '加载中…' : `暂无 ${type} 数据`}
+          </div>
+        )}
+        {!empty && (
+          <ResponsiveContainer width="100%" height="100%">
+            <LineChart data={data} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+              <XAxis
+                dataKey="t"
+                type="number"
+                domain={['dataMin', 'dataMax']}
+                scale="time"
+                tickFormatter={t => new Date(t).toLocaleTimeString()}
+                tick={{ fontSize: 11 }}
+                stroke="hsl(var(--muted-foreground))"
+              />
+              <YAxis
+                tickFormatter={v => `${v}ms`}
+                tick={{ fontSize: 11 }}
+                stroke="hsl(var(--muted-foreground))"
+                width={48}
+              />
+              <Tooltip
+                contentStyle={TOOLTIP_STYLE}
+                labelFormatter={t => new Date(Number(t)).toLocaleTimeString()}
+                formatter={(v: number) => ms(Number(v))}
+              />
+              {visibleSeries.map(s => (
+                <Line
+                  key={s.name}
+                  type="monotone"
+                  dataKey={s.name}
+                  stroke={s.color}
+                  strokeWidth={1.5}
+                  dot={false}
+                  connectNulls
+                  isAnimationActive={false}
+                />
+              ))}
+            </LineChart>
+          </ResponsiveContainer>
+        )}
+        {!empty && loading && (
+          <div className="absolute top-1 right-1 h-1.5 w-1.5 rounded-full bg-primary animate-pulse" />
+        )}
+      </div>
+
+      {stats.length > 0 && (
+        <div className="mt-3 border-t pt-3">
+          <div className="flex items-center px-2 pb-1 text-[11px] text-muted-foreground">
+            <span className="flex-1">来源</span>
+            <span className="w-20 text-right">平均延迟</span>
+            <span className="w-16 text-right">抖动</span>
+            <span className="w-14 text-right">丢包率</span>
+          </div>
+          <div className="space-y-0.5">
+            {stats.map(s => (
+              <LatencyStatsRow
+                key={s.name}
+                stat={s}
+                hidden={hidden.has(s.name)}
+                onToggle={() => toggle(s.name)}
+              />
+            ))}
+          </div>
+        </div>
+      )}
+    </Section>
+  )
+}
+
+function LatencyStatsRow({
+  stat,
+  hidden,
+  onToggle,
+}: {
+  stat: LatencyStats
+  hidden: boolean
+  onToggle: () => void
+}) {
+  const { name, color, avg, jitter, lossRate } = stat
+
+  return (
+    <div
+      onClick={onToggle}
+      className={cn(
+        'flex items-center px-2 py-1 rounded-md text-xs cursor-pointer select-none transition-opacity hover:bg-muted/60',
+        hidden && 'opacity-35',
+      )}
+    >
+      <span className="flex items-center gap-2 flex-1 min-w-0">
+        <span
+          className="inline-block w-4 h-0.5 rounded-full shrink-0"
+          style={{ background: color }}
+        />
+        <span className="truncate">{name}</span>
+      </span>
+      <span className="w-20 text-right tabular-nums font-mono">
+        {avg != null ? ms(avg) : '—'}
+      </span>
+      <span className="w-16 text-right tabular-nums font-mono">
+        {jitter != null ? ms(jitter) : '—'}
+      </span>
+      <span
+        className={cn(
+          'w-14 text-right tabular-nums font-mono',
+          lossRate >= 5 && 'text-red-500 font-medium',
+        )}
+      >
+        {lossRate.toFixed(1)}%
+      </span>
     </div>
   )
 }
